@@ -1,0 +1,54 @@
+# Get dasel
+FROM ghcr.io/tomwright/dasel:2-alpine AS dasel
+
+# Get yq
+FROM mikefarah/yq AS yq
+
+FROM debian:bookworm-slim
+
+ARG USER=sui
+ARG UID=10001
+ARG DOCKER_TAG=mainnet
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates tzdata bash curl wget lz4 jq tar
+
+# See https://stackoverflow.com/a/55757473/12429735RUN
+RUN adduser \
+    --disabled-password \
+    --gecos "" \
+    --shell "/sbin/nologin" \
+    --uid "${UID}" \
+    "${USER}"
+
+RUN usermod -rG users ${USER}
+
+RUN mkdir -p /opt/sui/config/
+RUN chown -R ${USER}:${USER} /opt/sui && chmod -R 700 /opt/sui
+
+# Download binaries.
+WORKDIR /build
+RUN wget https://github.com/MystenLabs/sui/releases/download/${DOCKER_TAG}/sui-${DOCKER_TAG}-ubuntu-x86_64.tgz -O sui-bin.tgz
+RUN tar -xvf sui-bin.tgz && chown -R ${USER}:${USER} /build
+RUN mv sui-node /usr/local/bin/ && mv sui-tool /usr/local/bin/
+RUN rm -rf /build/*
+COPY ./peers.mainnet.yml /build
+COPY ./peers.testnet.yml /build
+RUN chown -R ${USER}:${USER} /build && chmod -R 700 /build
+
+# Copy binaries.
+COPY --from=dasel --chown=${USER}:${USER} /usr/local/bin/dasel /usr/local/bin/
+COPY --from=yq --chown=${USER}:${USER} /usr/bin/yq /usr/local/bin/
+
+# Cannot assume buildkit, hence no chmod
+COPY ./docker-entrypoint.sh /usr/local/bin/
+
+# Belt and suspenders
+RUN chmod -R 755 /usr/local/bin/*
+
+USER ${USER}
+
+# Test
+RUN sui-node --version
+RUN sui-tool --version
+
+ENTRYPOINT ["sui-node"]

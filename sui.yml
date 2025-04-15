@@ -1,0 +1,54 @@
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: 100m
+      max-file: "3"
+      tag: '{{.ImageName}}|{{.Name}}|{{.ImageFullID}}|{{.FullID}}'
+
+services:
+  sui-node:
+    build:
+      context: ./sui
+      dockerfile: Dockerfile.binary
+      args:
+        - DOCKER_TAG=${DOCKER_TAG}
+    image: sui:local
+    pull_policy: never
+    user: sui
+    stop_grace_period: 5m
+    restart: unless-stopped
+    environment:
+      - NETWORK=${NETWORK}
+      - EXTRAS=${EXTRAS}
+      - RPC_PORT=${RPC_PORT:-9000}
+      - P2P_PORT=${P2P_PORT:-8084}
+    <<: *logging
+    entrypoint:
+      - docker-entrypoint.sh
+      - sui-node
+      - --config-path
+      - /opt/sui/config/node.yml
+    ports:
+      - ${P2P_PORT:-8084}:${P2P_PORT:-8084}/udp
+    volumes:
+      - sui-data:/opt/sui
+    labels:
+        - traefik.enable=true
+        - traefik.http.routers.${RPC_HOST}.service=${RPC_HOST}
+        - traefik.http.routers.${RPC_HOST}.entrypoints=websecure
+        - traefik.http.routers.${RPC_HOST}.rule=Host(`${RPC_HOST}.${DOMAIN}`)
+        - traefik.http.routers.${RPC_HOST}.tls.certresolver=letsencrypt
+        - traefik.http.routers.${RPC_HOST}lb.service=${RPC_HOST}
+        - traefik.http.routers.${RPC_HOST}lb.entrypoints=websecure
+        - traefik.http.routers.${RPC_HOST}lb.rule=Host(`${RPC_LB}.${DOMAIN}`)
+        - traefik.http.routers.${RPC_HOST}lb.tls.certresolver=letsencrypt
+        - traefik.http.services.${RPC_HOST}.loadbalancer.server.port=${RPC_PORT}
+        - metrics.scrape=true
+        - metrics.path=/metrics
+        - metrics.port=9184
+        - metrics.instance=sui
+        - metrics.network=${NETWORK}
+
+volumes:
+  sui-data:
