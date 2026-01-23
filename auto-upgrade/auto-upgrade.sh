@@ -45,7 +45,7 @@ resolve_compose_files() {
     return
   fi
 
-  PROJECT_NAME=$(basename "${REPO_DIR}")
+  PROJECT_NAME=${COMPOSE_PROJECT_NAME:-$(basename "${REPO_DIR}")}
 
   local raw
   raw=$(env_get COMPOSE_FILE || true)
