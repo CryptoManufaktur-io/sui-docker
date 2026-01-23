@@ -10,6 +10,7 @@ SLACK_NO_UPDATE=${SLACK_NO_UPDATE:-0}
 GITHUB_API=${GITHUB_API:-https://api.github.com}
 SERVICE_NAME=${SERVICE_NAME:-sui-node}
 COMPOSE_ARGS=()
+PROJECT_NAME=
 
 log() {
   echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"
@@ -44,6 +45,8 @@ resolve_compose_files() {
     return
   fi
 
+  PROJECT_NAME=$(basename "${REPO_DIR}")
+
   local raw
   raw=$(env_get COMPOSE_FILE || true)
   if [ -z "${raw}" ]; then
@@ -67,7 +70,7 @@ resolve_compose_files() {
 
 compose() {
   resolve_compose_files
-  docker compose --project-directory "${REPO_DIR}" --env-file "${ENV_FILE}" "${COMPOSE_ARGS[@]}" "$@"
+  docker compose --project-directory "${REPO_DIR}" --env-file "${ENV_FILE}" --project-name "${PROJECT_NAME}" "${COMPOSE_ARGS[@]}" "$@"
 }
 
 fetch_latest_tag() {

@@ -14,7 +14,7 @@
 - `./suid update` refreshes client versions and this repo, then run `./suid up`.
 - `./suid logs -f --tail 50 sui-node` tails service logs (example).
 - `./suid cmd ps` runs an arbitrary `docker compose` subcommand.
-- Optional auto-upgrade: include `auto-upgrade.yml` in `COMPOSE_FILE` and tune `WATCH_INTERVAL` or `SLACK_WEBHOOK_URL` in `.env`. Compose files are resolved relative to the repo.
+- Optional auto-upgrade: include `auto-upgrade.yml` in `COMPOSE_FILE` and tune `WATCH_INTERVAL` or `SLACK_WEBHOOK_URL` in `.env`. The auto-upgrade container uses the repo directory name as the compose project name. Compose files are resolved relative to the repo.
 
 ## Coding Style & Naming Conventions
 - Shell scripts use `bash` with `set -Eeuo pipefail`; keep changes consistent with existing 2-space indentation.

@@ -38,6 +38,7 @@ To enable it, add `auto-upgrade.yml` to `COMPOSE_FILE` in `.env`, e.g.:
 `COMPOSE_FILE=sui.yml:auto-upgrade.yml`
 
 You can tune behavior via `.env`: `WATCH_INTERVAL`, `RUN_ONCE`, `SERVICE_NAME`, `SLACK_WEBHOOK_URL`, `SLACK_NO_UPDATE`.
+The auto-upgrade container uses the repo directory name as the compose project name.
 
 ## Version
 
