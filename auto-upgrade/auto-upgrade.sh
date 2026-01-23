@@ -9,6 +9,7 @@ SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
 SLACK_NO_UPDATE=${SLACK_NO_UPDATE:-0}
 GITHUB_API=${GITHUB_API:-https://api.github.com}
 SERVICE_NAME=${SERVICE_NAME:-sui-node}
+COMPOSE_ARGS=()
 
 log() {
   echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"
@@ -38,8 +39,35 @@ env_set() {
   fi
 }
 
+resolve_compose_files() {
+  if [ "${#COMPOSE_ARGS[@]}" -gt 0 ]; then
+    return
+  fi
+
+  local raw
+  raw=$(env_get COMPOSE_FILE || true)
+  if [ -z "${raw}" ]; then
+    raw="sui.yml"
+  fi
+
+  local IFS=:
+  local part
+  read -r -a parts <<< "${raw}"
+  for part in "${parts[@]}"; do
+    if [ -z "${part}" ]; then
+      continue
+    fi
+    if [[ "${part}" = /* ]]; then
+      COMPOSE_ARGS+=(-f "${part}")
+    else
+      COMPOSE_ARGS+=(-f "${REPO_DIR}/${part}")
+    fi
+  done
+}
+
 compose() {
-  docker compose --project-directory "${REPO_DIR}" --env-file "${ENV_FILE}" "$@"
+  resolve_compose_files
+  docker compose --project-directory "${REPO_DIR}" --env-file "${ENV_FILE}" "${COMPOSE_ARGS[@]}" "$@"
 }
 
 fetch_latest_tag() {
@@ -59,6 +87,7 @@ upgrade_once() {
     exit 1
   fi
 
+  COMPOSE_ARGS=()
   local current_tag network latest_tag backup container_id status
   current_tag=$(env_get DOCKER_TAG || true)
   network=$(env_get NETWORK || true)
