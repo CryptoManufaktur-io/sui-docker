@@ -3,6 +3,7 @@ services:
     build:
       context: ./auto-upgrade
     image: sui-auto-upgrade:local
+    pull_policy: never
     restart: unless-stopped
     environment:
       - REPO_DIR=/workspace
