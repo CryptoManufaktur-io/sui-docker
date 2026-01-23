@@ -28,6 +28,17 @@ To update the software, run `./suid update` and then `./suid up`
 `custom.yml` is not tracked by git and can be used to override anything in the provided yml files. If you use it,
 add it to `COMPOSE_FILE` in `.env`
 
+## Auto-upgrade (optional)
+
+An optional containerized auto-upgrade job is provided in `auto-upgrade.yml`. It mounts the repo and Docker socket,
+polls GitHub releases, updates `DOCKER_TAG` in `.env`, rebuilds, and restarts the stack.
+
+To enable it, add `auto-upgrade.yml` to `COMPOSE_FILE` in `.env`, e.g.:
+
+`COMPOSE_FILE=sui.yml:auto-upgrade.yml`
+
+You can tune behavior via `.env`: `WATCH_INTERVAL`, `RUN_ONCE`, `SERVICE_NAME`, `SLACK_WEBHOOK_URL`, `SLACK_NO_UPDATE`.
+
 ## Version
 
 Sui Docker uses a semver scheme.

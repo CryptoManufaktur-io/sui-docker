@@ -1,9 +1,10 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Root compose files: `sui.yml` (base stack), `rpc-shared.yml` (expose RPC locally), `ext-network.yml` (integration with central-proxy-docker).
+- Root compose files: `sui.yml` (base stack), `rpc-shared.yml` (expose RPC locally), `ext-network.yml` (integration with central-proxy-docker), `auto-upgrade.yml` (optional auto-upgrade container).
 - `default.env` is the template; create `.env` locally for overrides. `custom.yml` is an optional, untracked override file referenced via `COMPOSE_FILE`.
 - `sui/` holds image assets and runtime bits: `Dockerfile.binary`, `docker-entrypoint.sh`, and peer lists such as `peers.mainnet.yml` and `peers.testnet.yml`.
+- `auto-upgrade/` contains the auto-upgrade container image and script.
 - Lifecycle helpers: `suid` (primary CLI) and `ethd` (same interface) wrap Docker Compose operations.
 
 ## Build, Test, and Development Commands
@@ -13,6 +14,7 @@
 - `./suid update` refreshes client versions and this repo, then run `./suid up`.
 - `./suid logs -f --tail 50 sui-node` tails service logs (example).
 - `./suid cmd ps` runs an arbitrary `docker compose` subcommand.
+- Optional auto-upgrade: include `auto-upgrade.yml` in `COMPOSE_FILE` and tune `WATCH_INTERVAL` or `SLACK_WEBHOOK_URL` in `.env`.
 
 ## Coding Style & Naming Conventions
 - Shell scripts use `bash` with `set -Eeuo pipefail`; keep changes consistent with existing 2-space indentation.
