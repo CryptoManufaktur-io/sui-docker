@@ -1,0 +1,17 @@
+services:
+  sui-auto-upgrade:
+    build:
+      context: ./auto-upgrade
+    image: sui-auto-upgrade:local
+    restart: unless-stopped
+    environment:
+      - REPO_DIR=/workspace
+      - ENV_FILE=/workspace/.env
+      - WATCH_INTERVAL=${WATCH_INTERVAL:-3600}
+      - RUN_ONCE=${RUN_ONCE:-0}
+      - SERVICE_NAME=${SERVICE_NAME:-sui-node}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL-}
+      - SLACK_NO_UPDATE=${SLACK_NO_UPDATE:-0}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/workspace
