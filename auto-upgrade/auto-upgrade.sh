@@ -132,16 +132,16 @@ upgrade_once() {
     log "Build failed. Rolling back."
     cp "${backup}" "${ENV_FILE}"
     compose build --pull || true
-    compose up -d || true
+    compose up -d --remove-orphans "${SERVICE_NAME}" || true
     slack "❌ Upgrade failed for Sui ${network}. Build error. Rolled back to ${current_tag}."
     exit 1
   fi
 
-  if ! compose up -d; then
+  if ! compose up -d --remove-orphans "${SERVICE_NAME}"; then
     log "Startup failed. Rolling back."
     cp "${backup}" "${ENV_FILE}"
     compose build --pull || true
-    compose up -d || true
+    compose up -d --remove-orphans "${SERVICE_NAME}" || true
     slack "❌ Upgrade failed for Sui ${network}. Startup error. Rolled back to ${current_tag}."
     exit 1
   fi
@@ -158,7 +158,7 @@ upgrade_once() {
     log "Container not running (status=${status}). Rolling back."
     cp "${backup}" "${ENV_FILE}"
     compose build --pull || true
-    compose up -d || true
+    compose up -d --remove-orphans "${SERVICE_NAME}" || true
     slack "❌ Upgrade failed for Sui ${network}. Container status=${status}. Rolled back to ${current_tag}."
     exit 1
   fi
