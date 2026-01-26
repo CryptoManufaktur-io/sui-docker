@@ -13,7 +13,7 @@ services:
       dockerfile: Dockerfile.binary
       args:
         - DOCKER_TAG=${DOCKER_TAG}
-    image: sui:local
+    image: sui-node:${DOCKER_TAG:-local}
     pull_policy: never
     user: sui
     stop_grace_period: 5m
