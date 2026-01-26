@@ -16,4 +16,5 @@ services:
       - SLACK_NO_UPDATE=${SLACK_NO_UPDATE:-0}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/hostname:/host/etc/hostname:ro
       - ./:/workspace

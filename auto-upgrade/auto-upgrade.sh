@@ -9,6 +9,8 @@ SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
 SLACK_NO_UPDATE=${SLACK_NO_UPDATE:-0}
 GITHUB_API=${GITHUB_API:-https://api.github.com}
 SERVICE_NAME=${SERVICE_NAME:-sui-node}
+HOSTNAME_LABEL=${HOSTNAME_LABEL:-}
+HOSTNAME_FILE=${HOSTNAME_FILE:-/host/etc/hostname}
 COMPOSE_ARGS=()
 PROJECT_NAME=
 
@@ -16,9 +18,25 @@ log() {
   echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"
 }
 
+resolve_hostname_label() {
+  if [ -n "${HOSTNAME_LABEL}" ]; then
+    return
+  fi
+
+  if [ -r "${HOSTNAME_FILE}" ]; then
+    HOSTNAME_LABEL=$(tr -d '\r\n' < "${HOSTNAME_FILE}")
+  fi
+
+  if [ -z "${HOSTNAME_LABEL}" ]; then
+    HOSTNAME_LABEL=$(hostname 2>/dev/null || echo unknown)
+  fi
+}
+
 slack() {
   local message="$1"
+  resolve_hostname_label
   if [ -n "${SLACK_WEBHOOK_URL}" ]; then
+    message="${message} on host ${HOSTNAME_LABEL}"
     curl -fsSL -X POST -H 'Content-type: application/json' \
       --data "{\"text\": \"${message}\"}" \
       "${SLACK_WEBHOOK_URL}" >/dev/null || true
