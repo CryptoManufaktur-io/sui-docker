@@ -891,7 +891,11 @@ cmd() {
 }
 
 check_sync() {
-  ./scripts/check_sync.sh "$@"
+  if [[ $# -eq 0 ]]; then
+    ./scripts/check_sync.sh --compose-service sui-node
+  else
+    ./scripts/check_sync.sh "$@"
+  fi
 }
 
 

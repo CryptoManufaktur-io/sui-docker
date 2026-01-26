@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 usage() {
   cat <<'USAGE'
@@ -11,6 +11,7 @@ Options:
   --local-rpc URL          Local Sui JSON-RPC URL (default: http://127.0.0.1:${RPC_PORT:-9000})
   --public-rpc URL         Public/reference Sui JSON-RPC URL (default: https://fullnode.<network>.sui.io:443)
   --block-lag N            Acceptable lag in checkpoints (default: 2)
+  --sample-secs N          ETA sampling window in seconds (default: 10)
   --no-install             Do not install curl/jq inside the container
   --env-file PATH          Path to env file to load
   -h, --help               Show this help
@@ -28,6 +29,7 @@ DOCKER_SERVICE="${DOCKER_SERVICE:-}"
 LOCAL_RPC="${LOCAL_RPC:-}"
 PUBLIC_RPC="${PUBLIC_RPC:-}"
 BLOCK_LAG_THRESHOLD="${BLOCK_LAG_THRESHOLD:-2}"
+SAMPLE_SECS="${SAMPLE_SECS:-10}"
 INSTALL_TOOLS="${INSTALL_TOOLS:-1}"
 
 load_env_file() {
@@ -72,6 +74,7 @@ while [[ $# -gt 0 ]]; do
     --local-rpc) LOCAL_RPC="$2"; shift 2 ;;
     --public-rpc) PUBLIC_RPC="$2"; shift 2 ;;
     --block-lag) BLOCK_LAG_THRESHOLD="$2"; shift 2 ;;
+    --sample-secs) SAMPLE_SECS="$2"; shift 2 ;;
     --no-install) INSTALL_TOOLS="0"; shift ;;
     --env-file) ENV_FILE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -80,7 +83,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 LOCAL_RPC="${LOCAL_RPC:-http://127.0.0.1:${RPC_PORT:-9000}}"
-PUBLIC_RPC="${PUBLIC_RPC:-}"
 
 if [[ -n "$CONTAINER" && -n "$DOCKER_SERVICE" ]]; then
   echo "❌ Error: --container and --compose-service are mutually exclusive"
@@ -102,6 +104,11 @@ fi
 
 if [[ ! "$BLOCK_LAG_THRESHOLD" =~ ^[0-9]+$ ]]; then
   echo "❌ Error: --block-lag must be an integer"
+  exit 2
+fi
+
+if [[ ! "$SAMPLE_SECS" =~ ^[0-9]+$ ]]; then
+  echo "❌ Error: --sample-secs must be an integer"
   exit 2
 fi
 
@@ -138,6 +145,7 @@ run_cmd() {
 ensure_tools() {
   if [[ -n "$CONTAINER" ]]; then
     if [[ "$INSTALL_TOOLS" == "1" ]]; then
+      echo "==> Ensuring curl and jq are installed inside container"
       docker exec -u root "$CONTAINER" sh -c '
         set -e
         if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
@@ -199,10 +207,6 @@ extract_digest() {
   '
 }
 
-extract_error() {
-  run_cmd jq -r '.error.message // .message // empty'
-}
-
 get_latest_checkpoint() {
   local url="$1"
   local response
@@ -213,7 +217,6 @@ get_latest_checkpoint() {
   local height
   height=$(echo "$response" | extract_height)
   if [[ -z "$height" || "$height" == "null" ]]; then
-    echo "$response" | extract_error >&2 || true
     return 1
   fi
   printf '%s' "$height"
@@ -250,13 +253,7 @@ fi
 
 ensure_tools
 
-echo "🔎 Checking Sui checkpoint sync..."
-echo "Local RPC:  $LOCAL_RPC"
-echo "Public RPC: $PUBLIC_RPC"
-if [[ -n "${ENV_FILE:-}" ]]; then
-  echo "Env file:   $ENV_FILE"
-fi
-echo
+echo "==> Querying local and public heads (checkpoint sequence) and estimating ETA"
 
 local_height="$(get_latest_checkpoint "$LOCAL_RPC")" || {
   echo "❌ Error: failed to fetch local checkpoint sequence number"
@@ -272,16 +269,59 @@ if [[ ! "$local_height" =~ ^[0-9]+$ || ! "$public_height" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
-lag=$((public_height - local_height))
-catching_up="false"
-if (( lag > BLOCK_LAG_THRESHOLD )); then
-  catching_up="true"
+remaining=$((public_height - local_height))
+
+echo "Local  head:    $local_height"
+echo "Public head:    $public_height"
+echo "Remaining:      $remaining checkpoints"
+
+echo "==> Sampling local head rate for ~${SAMPLE_SECS}s"
+sleep "$SAMPLE_SECS"
+
+local_height_2="$(get_latest_checkpoint "$LOCAL_RPC")" || {
+  echo "❌ Error: failed to fetch local checkpoint sequence number"
+  exit 3
+}
+
+delta=$((local_height_2 - local_height))
+echo "Advanced:       $delta checkpoints in ${SAMPLE_SECS}s"
+
+if (( delta <= 0 )); then
+  echo "ETA:            unknown (local head not advancing yet)"
+else
+  bps=$((delta / SAMPLE_SECS))
+  if (( bps <= 0 )); then
+    echo "ETA:            unknown (rate < 1 checkpoint/sec over sample window)"
+  else
+    eta_secs=$((remaining / bps))
+    eta_mins=$((eta_secs / 60))
+    echo "Rate:           ~${bps} checkpoints/sec"
+    echo "ETA to head:    ~${eta_mins} minutes (very rough)"
+  fi
 fi
 
-echo "Local  checkpoint: $local_height"
-echo "Public checkpoint: $public_height"
-echo "Lag:              $lag (threshold: $BLOCK_LAG_THRESHOLD)"
-echo "Catching up:      $catching_up"
+echo
+echo "==> Querying local and public latest checkpoints (sequence + digest)"
+
+local_digest="$(get_checkpoint_digest "$LOCAL_RPC" "$local_height" || true)"
+public_digest="$(get_checkpoint_digest "$PUBLIC_RPC" "$public_height" || true)"
+
+if [[ -z "$local_digest" ]]; then
+  echo "❌ Error: local RPC returned no checkpoint digest"
+  exit 3
+fi
+
+if [[ -z "$public_digest" ]]; then
+  echo "❌ Error: public RPC returned no checkpoint digest"
+  exit 4
+fi
+
+lag=$((public_height - local_height))
+
+echo
+echo "Local   checkpoint: $local_height  $local_digest"
+echo "Public  checkpoint: $public_height $public_digest"
+echo "Lag:               $lag checkpoints (threshold: $BLOCK_LAG_THRESHOLD)"
 echo
 
 if (( lag < 0 )); then
@@ -289,20 +329,20 @@ if (( lag < 0 )); then
   exit 0
 fi
 
-local_digest="$(get_checkpoint_digest "$LOCAL_RPC" "$local_height" || true)"
-public_digest="$(get_checkpoint_digest "$PUBLIC_RPC" "$local_height" || true)"
-
-if [[ -n "$local_digest" && -n "$public_digest" && "$local_digest" != "$public_digest" ]]; then
-  echo "❌ Error: checkpoint digest mismatch at sequence $local_height"
-  echo "Local:  $local_digest"
-  echo "Public: $public_digest"
+if [[ "$local_height" == "$public_height" && "$local_digest" != "$public_digest" ]]; then
+  echo "❌ Checkpoint sequences match but digests differ. Possible divergence."
   exit 2
 fi
 
 if (( lag > BLOCK_LAG_THRESHOLD )); then
-  echo "⏳ Status: SYNCING (lag exceeds threshold)"
+  echo "⚠️  Checkpoint lag exceeds threshold. Still syncing."
   exit 1
 fi
 
-echo "✅ Status: IN SYNC"
+if [[ "$local_height" == "$public_height" && "$local_digest" == "$public_digest" ]]; then
+  echo "✅ Node is in sync (sequence and digest match)"
+  exit 0
+fi
+
+echo "⚠️  Checkpoints differ but within threshold. Likely normal propagation lag."
 exit 0

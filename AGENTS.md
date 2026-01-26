@@ -13,7 +13,7 @@
 - `./suid up` starts or updates services; `./suid down` stops them.
 - `./suid update` refreshes client versions and this repo, then run `./suid up`.
 - `./suid logs -f --tail 50 sui-node` tails service logs (example).
-- `./suid check-sync --public-rpc <url>` compares local checkpoint height with a public RPC (defaults to https://fullnode.<network>.sui.io:443); output uses emoji status markers.
+- `./suid check-sync` compares local checkpoint height with a public RPC using the default `sui-node` compose service and https://fullnode.<network>.sui.io:443 (from `NETWORK`); output includes sync status, head/lag, ETA sample, and digest comparison with emoji status markers.
 - `./suid -h` or `./ethd -h` shows top-level help; `check-sync -h` still reaches the subcommand help.
 - `./suid cmd ps` runs an arbitrary `docker compose` subcommand.
 - Optional auto-upgrade: include `auto-upgrade.yml` in `COMPOSE_FILE` and tune `WATCH_INTERVAL` or `SLACK_WEBHOOK_URL` in `.env`. The auto-upgrade container uses the repo directory name as the compose project name. Compose files are resolved relative to the repo.
