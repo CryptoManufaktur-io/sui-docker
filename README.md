@@ -23,6 +23,14 @@ The `./suid` script can be used as a quick-start:
 
 To update the software, run `./suid update` and then `./suid up`
 
+## Sync check
+
+Compare your local node against a public RPC:
+
+`./suid check-sync --public-rpc https://public-rpc.example`
+
+The command reads `.env` if present and uses `RPC_PORT` for the local endpoint. If `PUBLIC_RPC` is unset, it defaults to https://fullnode.<network>.sui.io:443 based on `NETWORK`.
+
 ## Customization
 
 `custom.yml` is not tracked by git and can be used to override anything in the provided yml files. If you use it,
