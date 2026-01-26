@@ -83,7 +83,7 @@ LOCAL_RPC="${LOCAL_RPC:-http://127.0.0.1:${RPC_PORT:-9000}}"
 PUBLIC_RPC="${PUBLIC_RPC:-}"
 
 if [[ -n "$CONTAINER" && -n "$DOCKER_SERVICE" ]]; then
-  echo "Error: --container and --compose-service are mutually exclusive"
+  echo "❌ Error: --container and --compose-service are mutually exclusive"
   exit 2
 fi
 
@@ -101,7 +101,7 @@ if [[ -z "$PUBLIC_RPC" ]]; then
 fi
 
 if [[ ! "$BLOCK_LAG_THRESHOLD" =~ ^[0-9]+$ ]]; then
-  echo "Error: --block-lag must be an integer"
+  echo "❌ Error: --block-lag must be an integer"
   exit 2
 fi
 
@@ -110,7 +110,7 @@ resolve_container() {
     return 0
   fi
   if ! command -v docker >/dev/null 2>&1; then
-    echo "Error: docker not found; cannot resolve --compose-service $DOCKER_SERVICE"
+    echo "❌ Error: docker not found; cannot resolve --compose-service $DOCKER_SERVICE"
     exit 2
   fi
   if docker compose version >/dev/null 2>&1; then
@@ -118,11 +118,11 @@ resolve_container() {
   elif command -v docker-compose >/dev/null 2>&1; then
     CONTAINER="$(docker-compose ps -q "$DOCKER_SERVICE" | head -n 1)"
   else
-    echo "Error: docker compose not available; cannot resolve --compose-service $DOCKER_SERVICE"
+    echo "❌ Error: docker compose not available; cannot resolve --compose-service $DOCKER_SERVICE"
     exit 2
   fi
   if [[ -z "$CONTAINER" ]]; then
-    echo "Error: no running container found for service $DOCKER_SERVICE"
+    echo "❌ Error: no running container found for service $DOCKER_SERVICE"
     exit 2
   fi
 }
@@ -155,13 +155,13 @@ ensure_tools() {
       '
     else
       if ! run_cmd command -v curl >/dev/null 2>&1 || ! run_cmd command -v jq >/dev/null 2>&1; then
-        echo "Error: curl and jq are required in the container. Re-run without --no-install."
+        echo "❌ Error: curl and jq are required in the container. Re-run without --no-install."
         exit 2
       fi
     fi
   else
     if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-      echo "Error: curl and jq are required on the host when no --container is set."
+      echo "❌ Error: curl and jq are required on the host when no --container is set."
       exit 2
     fi
   fi
@@ -239,18 +239,18 @@ resolve_container
 
 if [[ -n "$CONTAINER" ]]; then
   if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
-    echo "Error: container '$CONTAINER' not found"
+    echo "❌ Error: container '$CONTAINER' not found"
     exit 2
   fi
   if [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER")" != "true" ]]; then
-    echo "Error: container '$CONTAINER' is not running"
+    echo "❌ Error: container '$CONTAINER' is not running"
     exit 2
   fi
 fi
 
 ensure_tools
 
-echo "Checking Sui checkpoint sync..."
+echo "🔎 Checking Sui checkpoint sync..."
 echo "Local RPC:  $LOCAL_RPC"
 echo "Public RPC: $PUBLIC_RPC"
 if [[ -n "${ENV_FILE:-}" ]]; then
@@ -259,16 +259,16 @@ fi
 echo
 
 local_height="$(get_latest_checkpoint "$LOCAL_RPC")" || {
-  echo "Error: failed to fetch local checkpoint sequence number"
+  echo "❌ Error: failed to fetch local checkpoint sequence number"
   exit 3
 }
 public_height="$(get_latest_checkpoint "$PUBLIC_RPC")" || {
-  echo "Error: failed to fetch public checkpoint sequence number"
+  echo "❌ Error: failed to fetch public checkpoint sequence number"
   exit 4
 }
 
 if [[ ! "$local_height" =~ ^[0-9]+$ || ! "$public_height" =~ ^[0-9]+$ ]]; then
-  echo "Error: non-numeric checkpoint sequence number detected"
+  echo "❌ Error: non-numeric checkpoint sequence number detected"
   exit 2
 fi
 
@@ -285,7 +285,7 @@ echo "Catching up:      $catching_up"
 echo
 
 if (( lag < 0 )); then
-  echo "Local checkpoint is ahead of public endpoint. Public may be lagging."
+  echo "⚠️  Local checkpoint is ahead of public endpoint. Public may be lagging."
   exit 0
 fi
 
@@ -293,16 +293,16 @@ local_digest="$(get_checkpoint_digest "$LOCAL_RPC" "$local_height" || true)"
 public_digest="$(get_checkpoint_digest "$PUBLIC_RPC" "$local_height" || true)"
 
 if [[ -n "$local_digest" && -n "$public_digest" && "$local_digest" != "$public_digest" ]]; then
-  echo "Error: checkpoint digest mismatch at sequence $local_height"
+  echo "❌ Error: checkpoint digest mismatch at sequence $local_height"
   echo "Local:  $local_digest"
   echo "Public: $public_digest"
   exit 2
 fi
 
 if (( lag > BLOCK_LAG_THRESHOLD )); then
-  echo "Status: SYNCING (lag exceeds threshold)"
+  echo "⏳ Status: SYNCING (lag exceeds threshold)"
   exit 1
 fi
 
-echo "Status: IN SYNC"
+echo "✅ Status: IN SYNC"
 exit 0
