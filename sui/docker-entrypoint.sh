@@ -25,6 +25,18 @@ fi
 dasel put -f /opt/sui/config/node.yml -v "0.0.0.0:${RPC_PORT}" json-rpc-address
 dasel put -f /opt/sui/config/node.yml -v "0.0.0.0:${P2P_PORT}" p2p-config.listen-address
 
+# Update pruning + archive read settings
+dasel put -f /opt/sui/config/node.yml -t int -v 3 authority-store-pruning-config.num-latest-epoch-dbs-to-retain
+dasel put -f /opt/sui/config/node.yml -t int -v 3600 authority-store-pruning-config.epoch-db-pruning-period-secs
+dasel put -f /opt/sui/config/node.yml -t int -v 1 authority-store-pruning-config.num-epochs-to-retain
+dasel put -f /opt/sui/config/node.yml -t int -v 10 authority-store-pruning-config.max-checkpoints-in-batch
+dasel put -f /opt/sui/config/node.yml -t int -v 1000 authority-store-pruning-config.max-transactions-in-batch
+dasel put -f /opt/sui/config/node.yml -t int -v 60 authority-store-pruning-config.pruning-run-delay-seconds
+
+dasel put -f /opt/sui/config/node.yml -t int -v 20 state-archive-read-config.[0].object-store-config.object-store-connection-limit
+dasel put -f /opt/sui/config/node.yml -t int -v 5 state-archive-read-config.[0].concurrency
+dasel put -f /opt/sui/config/node.yml -t bool -v false state-archive-read-config.[0].use-for-pruning-watermark
+
 
 #shellcheck disable=SC2086
 exec "$@" ${EXTRAS}
