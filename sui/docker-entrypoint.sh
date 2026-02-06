@@ -25,6 +25,11 @@ fi
 dasel put -f /opt/sui/config/node.yml -v "0.0.0.0:${RPC_PORT}" json-rpc-address
 dasel put -f /opt/sui/config/node.yml -v "0.0.0.0:${P2P_PORT}" p2p-config.listen-address
 
+dasel put -f /opt/sui/config/node.yml -t int -v 0 authority-store-pruning-config.num-epochs-to-retain
+dasel put -f /opt/sui/config/node.yml -t int -v 2 authority-store-pruning-config.num-epochs-to-retain-for-checkpoints
+dasel put -f /opt/sui/config/node.yml -t int -v 1 authority-store-pruning-config.periodic-compaction-threshold-days
+dasel put -f /opt/sui/config/node.yml -t bool -v true authority-store-pruning-config.use-range-deletion
+
 
 #shellcheck disable=SC2086
 exec "$@" ${EXTRAS}
