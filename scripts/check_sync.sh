@@ -11,7 +11,6 @@ Options:
   --local-rpc URL          Local Sui JSON-RPC URL (default: http://127.0.0.1:${RPC_PORT:-9000})
   --public-rpc URL         Public/reference Sui JSON-RPC URL (default: https://fullnode.<network>.sui.io:443)
   --block-lag N            Acceptable lag in checkpoints (default: 2)
-  --sample-secs N          ETA sampling window in seconds (default: 10)
   --no-install             Do not install curl/jq inside the container
   --env-file PATH          Path to env file to load
   -h, --help               Show this help
@@ -29,7 +28,6 @@ DOCKER_SERVICE="${DOCKER_SERVICE:-}"
 LOCAL_RPC="${LOCAL_RPC:-}"
 PUBLIC_RPC="${PUBLIC_RPC:-}"
 BLOCK_LAG_THRESHOLD="${BLOCK_LAG_THRESHOLD:-2}"
-SAMPLE_SECS="${SAMPLE_SECS:-10}"
 INSTALL_TOOLS="${INSTALL_TOOLS:-1}"
 
 load_env_file() {
@@ -74,7 +72,6 @@ while [[ $# -gt 0 ]]; do
     --local-rpc) LOCAL_RPC="$2"; shift 2 ;;
     --public-rpc) PUBLIC_RPC="$2"; shift 2 ;;
     --block-lag) BLOCK_LAG_THRESHOLD="$2"; shift 2 ;;
-    --sample-secs) SAMPLE_SECS="$2"; shift 2 ;;
     --no-install) INSTALL_TOOLS="0"; shift ;;
     --env-file) ENV_FILE="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -104,11 +101,6 @@ fi
 
 if [[ ! "$BLOCK_LAG_THRESHOLD" =~ ^[0-9]+$ ]]; then
   echo "❌ Error: --block-lag must be an integer"
-  exit 2
-fi
-
-if [[ ! "$SAMPLE_SECS" =~ ^[0-9]+$ ]]; then
-  echo "❌ Error: --sample-secs must be an integer"
   exit 2
 fi
 
@@ -143,9 +135,9 @@ run_cmd() {
 }
 
 ensure_tools() {
+  echo "⏳ Checking tools inside container"
   if [[ -n "$CONTAINER" ]]; then
     if [[ "$INSTALL_TOOLS" == "1" ]]; then
-      echo "==> Ensuring curl and jq are installed inside container"
       docker exec -u root "$CONTAINER" sh -c '
         set -e
         if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
@@ -163,15 +155,21 @@ ensure_tools() {
       '
     else
       if ! run_cmd command -v curl >/dev/null 2>&1 || ! run_cmd command -v jq >/dev/null 2>&1; then
-        echo "❌ Error: curl and jq are required in the container. Re-run without --no-install."
+        echo "❌ error: curl and jq are required in the container. Re-run without --no-install."
+        echo
+        echo "❌ Final status: error"
         exit 2
       fi
     fi
+    echo "✅ Tools available in container"
   else
     if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
-      echo "❌ Error: curl and jq are required on the host when no --container is set."
+      echo "❌ error: curl and jq are required on the host when no --container is set."
+      echo
+      echo "❌ Final status: error"
       exit 2
     fi
+    echo "✅ Tools available in container"
   fi
 }
 
@@ -183,7 +181,22 @@ rpc_call() {
   payload=$(printf '{"jsonrpc":"2.0","method":"%s","params":%s,"id":1}' "$method" "$params")
   run_cmd curl -sS -X POST "$url" \
     -H "Content-Type: application/json" \
-    -d "$payload"
+    -d "$payload" 2>/dev/null
+}
+
+rpc_call_checked() {
+  local url="$1"
+  local method="$2"
+  local params="${3:-[]}"
+  local response
+  response="$(rpc_call "$url" "$method" "$params")" || return 10
+  if [[ -z "$response" ]]; then
+    return 10
+  fi
+  if ! echo "$response" | run_cmd jq -e . >/dev/null 2>&1; then
+    return 11
+  fi
+  printf '%s' "$response"
 }
 
 extract_height() {
@@ -210,14 +223,11 @@ extract_digest() {
 get_latest_checkpoint() {
   local url="$1"
   local response
-  response=$(rpc_call "$url" "sui_getLatestCheckpointSequenceNumber" "[]")
-  if [[ -z "$response" ]]; then
-    return 1
-  fi
+  response="$(rpc_call_checked "$url" "sui_getLatestCheckpointSequenceNumber" "[]")" || return $?
   local height
-  height=$(echo "$response" | extract_height)
+  height=$(echo "$response" | extract_height 2>/dev/null)
   if [[ -z "$height" || "$height" == "null" ]]; then
-    return 1
+    return 12
   fi
   printf '%s' "$height"
 }
@@ -226,16 +236,39 @@ get_checkpoint_digest() {
   local url="$1"
   local checkpoint="$2"
   local response
-  response=$(rpc_call "$url" "sui_getCheckpoint" "[\"$checkpoint\"]")
-  if [[ -z "$response" ]]; then
-    return 1
-  fi
+  response="$(rpc_call_checked "$url" "sui_getCheckpoint" "[\"$checkpoint\"]")" || return $?
   local digest
-  digest=$(echo "$response" | extract_digest)
+  digest=$(echo "$response" | extract_digest 2>/dev/null)
   if [[ -z "$digest" || "$digest" == "null" ]]; then
-    return 1
+    return 12
   fi
   printf '%s' "$digest"
+}
+
+emit_error_and_exit() {
+  local message="$1"
+  echo "$message"
+  echo
+  echo "❌ Final status: error"
+  exit 2
+}
+
+handle_checkpoint_error() {
+  local rc="$1"
+  local url="$2"
+  local kind="$3"
+  case "$rc" in
+    10) emit_error_and_exit "❌ error: RPC unreachable ($url)" ;;
+    11) emit_error_and_exit "❌ error: JSON parse failure ($url)" ;;
+    12)
+      if [[ "$kind" == "height" ]]; then
+        emit_error_and_exit "❌ error: checkpoint sequence number missing in RPC response ($url)"
+      else
+        emit_error_and_exit "❌ error: checkpoint digest missing in RPC response ($url)"
+      fi
+      ;;
+    *) emit_error_and_exit "❌ error: unexpected RPC error ($url)" ;;
+  esac
 }
 
 resolve_container
@@ -253,96 +286,76 @@ fi
 
 ensure_tools
 
-echo "==> Querying local and public heads (checkpoint sequence) and estimating ETA"
+echo
+echo "⏳ Latest block comparison"
 
-local_height="$(get_latest_checkpoint "$LOCAL_RPC")" || {
-  echo "❌ Error: failed to fetch local checkpoint sequence number"
-  exit 3
-}
-public_height="$(get_latest_checkpoint "$PUBLIC_RPC")" || {
-  echo "❌ Error: failed to fetch public checkpoint sequence number"
-  exit 4
-}
+if local_height="$(get_latest_checkpoint "$LOCAL_RPC")"; then
+  :
+else
+  handle_checkpoint_error "$?" "$LOCAL_RPC" "height"
+fi
+if public_height="$(get_latest_checkpoint "$PUBLIC_RPC")"; then
+  :
+else
+  handle_checkpoint_error "$?" "$PUBLIC_RPC" "height"
+fi
 
 if [[ ! "$local_height" =~ ^[0-9]+$ || ! "$public_height" =~ ^[0-9]+$ ]]; then
-  echo "❌ Error: non-numeric checkpoint sequence number detected"
+  echo "❌ error: non-numeric checkpoint sequence number detected"
+  echo
+  echo "❌ Final status: error"
   exit 2
 fi
 
-remaining=$((public_height - local_height))
-
-echo "Local  head:    $local_height"
-echo "Public head:    $public_height"
-echo "Remaining:      $remaining checkpoints"
-
-echo "==> Sampling local head rate for ~${SAMPLE_SECS}s"
-sleep "$SAMPLE_SECS"
-
-local_height_2="$(get_latest_checkpoint "$LOCAL_RPC")" || {
-  echo "❌ Error: failed to fetch local checkpoint sequence number"
-  exit 3
-}
-
-delta=$((local_height_2 - local_height))
-echo "Advanced:       $delta checkpoints in ${SAMPLE_SECS}s"
-
-if (( delta <= 0 )); then
-  echo "ETA:            unknown (local head not advancing yet)"
+if local_digest="$(get_checkpoint_digest "$LOCAL_RPC" "$local_height")"; then
+  :
 else
-  bps=$((delta / SAMPLE_SECS))
-  if (( bps <= 0 )); then
-    echo "ETA:            unknown (rate < 1 checkpoint/sec over sample window)"
-  else
-    eta_secs=$((remaining / bps))
-    eta_mins=$((eta_secs / 60))
-    echo "Rate:           ~${bps} checkpoints/sec"
-    echo "ETA to head:    ~${eta_mins} minutes (very rough)"
-  fi
+  handle_checkpoint_error "$?" "$LOCAL_RPC" "digest"
 fi
-
-echo
-echo "==> Querying local and public latest checkpoints (sequence + digest)"
-
-local_digest="$(get_checkpoint_digest "$LOCAL_RPC" "$local_height" || true)"
-public_digest="$(get_checkpoint_digest "$PUBLIC_RPC" "$public_height" || true)"
-
-if [[ -z "$local_digest" ]]; then
-  echo "❌ Error: local RPC returned no checkpoint digest"
-  exit 3
-fi
-
-if [[ -z "$public_digest" ]]; then
-  echo "❌ Error: public RPC returned no checkpoint digest"
-  exit 4
+if public_digest="$(get_checkpoint_digest "$PUBLIC_RPC" "$public_height")"; then
+  :
+else
+  handle_checkpoint_error "$?" "$PUBLIC_RPC" "digest"
 fi
 
 lag=$((public_height - local_height))
 
-echo
-echo "Local   checkpoint: $local_height  $local_digest"
-echo "Public  checkpoint: $public_height $public_digest"
-echo "Lag:               $lag checkpoints (threshold: $BLOCK_LAG_THRESHOLD)"
-echo
-
+# Determine lag direction
 if (( lag < 0 )); then
-  echo "⚠️  Local checkpoint is ahead of public endpoint. Public may be lagging."
-  exit 0
+  lag_direction="local ahead"
+  lag_abs=$(( -lag ))
+elif (( lag > 0 )); then
+  lag_direction="local behind"
+  lag_abs=$lag
+else
+  lag_direction="in sync"
+  lag_abs=0
 fi
 
+echo "Local latest:  $local_height $local_digest"
+echo "Public latest: $public_height $public_digest"
+echo "Lag:         $lag_abs blocks (threshold: $BLOCK_LAG_THRESHOLD) ($lag_direction)"
+
+# Check for divergence at same height
 if [[ "$local_height" == "$public_height" && "$local_digest" != "$public_digest" ]]; then
-  echo "❌ Checkpoint sequences match but digests differ. Possible divergence."
+  echo "❌ error: checkpoint digests differ at same height"
+  echo
+  echo "❌ Final status: error"
   exit 2
 fi
 
-if (( lag > BLOCK_LAG_THRESHOLD )); then
-  echo "⚠️  Checkpoint lag exceeds threshold. Still syncing."
+# Determine final status
+if (( lag < 0 )); then
+  # Local is ahead of public
+  echo
+  echo "✅ Final status: in sync"
+  exit 0
+elif (( lag_abs > BLOCK_LAG_THRESHOLD )); then
+  echo
+  echo "⏳ Final status: syncing"
   exit 1
-fi
-
-if [[ "$local_height" == "$public_height" && "$local_digest" == "$public_digest" ]]; then
-  echo "✅ Node is in sync (sequence and digest match)"
+else
+  echo
+  echo "✅ Final status: in sync"
   exit 0
 fi
-
-echo "⚠️  Checkpoints differ but within threshold. Likely normal propagation lag."
-exit 0
