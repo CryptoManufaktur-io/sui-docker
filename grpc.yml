@@ -1,0 +1,21 @@
+# Optional overlay: exposes the Sui gRPC v2 API through the central Traefik proxy.
+#
+# gRPC is multiplexed onto the same port as JSON-RPC, but it needs an h2c backend, so
+# it gets its own router and service rather than changing the existing JSON-RPC ones.
+# Add to COMPOSE_FILE alongside ext-network.yml, and set GRPC_HOST and GRPC_TOKEN.
+#
+# Access is gated by matching the token header on the router rule: the Sui node itself
+# performs no authentication, so anything reaching port 9000 is unauthenticated. A
+# request without the header simply does not match the router and gets a 404 rather
+# than a 401. If that matters, or if all three header names the Chainlink relayer sends
+# (authorization / x-api-key / x-token) need accepting, put a small auth sidecar in
+# front instead and point this service at it.
+services:
+  sui-node:
+    labels:
+      - traefik.http.routers.${GRPC_HOST}.service=${GRPC_HOST}
+      - traefik.http.routers.${GRPC_HOST}.entrypoints=websecure
+      - traefik.http.routers.${GRPC_HOST}.rule=Host(`${GRPC_HOST}.${DOMAIN}`) && Header(`x-token`, `${GRPC_TOKEN}`)
+      - traefik.http.routers.${GRPC_HOST}.tls.certresolver=letsencrypt
+      - traefik.http.services.${GRPC_HOST}.loadbalancer.server.port=${RPC_PORT}
+      - traefik.http.services.${GRPC_HOST}.loadbalancer.server.scheme=h2c
