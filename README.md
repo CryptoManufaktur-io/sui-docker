@@ -34,6 +34,80 @@ Override the public endpoint if needed:
 
 The command reads `.env` if present and uses `RPC_PORT` for the local endpoint. By default it uses the `sui-node` compose service and https://fullnode.<network>.sui.io:443 based on `NETWORK`.
 
+## Pruning
+
+Sui prunes transactions, events and checkpoints, not just state.
+
+- `NUM_EPOCHS_TO_RETAIN` — epochs of historical object versions (default `0`)
+- `NUM_EPOCHS_TO_RETAIN_FOR_CHECKPOINTS` — epochs of transactions and checkpoints (default `2`)
+
+An epoch is ~24h. Raising these increases disk usage substantially.
+
+## gRPC API
+
+gRPC v2 is served on `RPC_PORT`, but only when indexing is enabled:
+
+```
+RPC_ENABLE_INDEXING=true          # serves gRPC
+RPC_ENABLE_INDEX_PROCESSING=true  # keeps JSON-RPC working alongside it
+```
+
+The gRPC index builds forward from wherever the node is when indexing is first enabled;
+it does not backfill. To serve historical checkpoints over gRPC, restore from a snapshot
+predating them with indexing already on. JSON-RPC and gRPC read from different stores, so
+JSON-RPC answering for an old checkpoint does not mean gRPC can.
+
+Enabling indexing on an existing node triggers a full rebuild, during which RPC is offline.
+
+### Exposing gRPC through Traefik
+
+`grpc.yml` publishes gRPC on its own hostname over h2c, gated on a token header. Add it to
+`COMPOSE_FILE` and set `GRPC_HOST` and `GRPC_TOKEN`. It is a separate overlay so that an
+unset host does not trigger certificate requests, and an empty token does not leave an
+ungated route.
+
+Requests without a valid token get a 404, not a 401. Use an auth sidecar if you need 401
+or multiple header names.
+
+## Restoring from a specific epoch
+
+`SNAPSHOT_EPOCH` pins the formal snapshot to an epoch instead of the latest. Applies only
+on first initialisation.
+
+A snapshot for epoch N restores state as of the **end** of N, so the node starts at the
+first checkpoint of N+1. To keep history from within epoch N, restore from N-1.
+
+`SNAPSHOT_PARALLEL_DOWNLOADS` and `SNAPSHOT_MAX_RETRIES` tune the restore. Restore verifies
+against `checkpoints.mainnet.sui.io`; at high concurrency those requests time out and abort
+the restore, which then starts over. Lower `SNAPSHOT_PARALLEL_DOWNLOADS` if you see
+`operation timed out`.
+
+## Archival fallback
+
+State sync reads the archive only when the node is behind what peers retain (~1-2 epochs),
+i.e. after restoring an older snapshot or extended downtime. Without it, sync stops and
+logs `Failed to find an archive reader to complete the state sync request`.
+
+```
+ARCHIVE_INGESTION_URL=https://s3.us-west-2.amazonaws.com/mysten-mainnet-checkpoints
+ARCHIVE_CONCURRENCY=20
+ARCHIVE_AWS_KEY_FILE=/opt/sui/creds/access_key_id
+ARCHIVE_AWS_SECRET_FILE=/opt/sui/creds/secret_access_key
+AWS_REQUEST_PAYER=true
+```
+
+The mainnet bucket is requester-pays: credentials are required and egress is billed to your
+account. It is idle in normal operation, so leaving it configured costs nothing.
+
+Credentials are **paths to files**, not values — `sui-node` reads the file content, keeping
+them out of `.env` and `docker inspect`. Create them under the data volume, owned by uid
+10001, mode 0400, with no trailing newline (`printf '%s'`, not `echo`). The node refuses to
+start if the files are missing.
+
+An empty `ARCHIVE_INGESTION_URL` removes the section entirely. The upstream fullnode
+template ships an unparseable placeholder (`https://checkpoints.<mainnet|testnet>.sui.io`)
+which otherwise panics the node with `archival ingestion url must be valid`.
+
 ## Customization
 
 `custom.yml` is not tracked by git and can be used to override anything in the provided yml files. If you use it,
