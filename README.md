@@ -89,10 +89,10 @@ i.e. after restoring an older snapshot or extended downtime. Without it, sync st
 logs `Failed to find an archive reader to complete the state sync request`.
 
 ```
-ARCHIVE_INGESTION_URL=https://s3.us-west-2.amazonaws.com/mysten-mainnet-checkpoints
+ARCHIVE_INGESTION_URL=https://s3.<region>.amazonaws.com/<archive-bucket>
 ARCHIVE_CONCURRENCY=20
-ARCHIVE_AWS_KEY_FILE=/opt/sui/creds/access_key_id
-ARCHIVE_AWS_SECRET_FILE=/opt/sui/creds/secret_access_key
+ARCHIVE_AWS_KEY_FILE=/path/to/aws_access_key_id
+ARCHIVE_AWS_SECRET_FILE=/path/to/aws_secret_access_key
 AWS_REQUEST_PAYER=true
 ```
 
