@@ -9,7 +9,7 @@ Options:
   --container NAME         Docker container name or ID to run curl/jq within
   --compose-service NAME   Docker Compose service name to resolve to a container
   --local-rpc URL          Local Sui JSON-RPC URL (default: http://127.0.0.1:${RPC_PORT:-9000})
-  --public-rpc URL         Public/reference Sui JSON-RPC URL (default: https://fullnode.<network>.sui.io:443)
+  --public-rpc URL         Public/reference Sui JSON-RPC URL (default: https://sui-rpc.publicnode.com)
   --block-lag N            Acceptable lag in checkpoints (default: 2)
   --sample-secs N          ETA sampling window in seconds (default: 10)
   --no-install             Do not install curl/jq inside the container
@@ -89,12 +89,22 @@ if [[ -n "$CONTAINER" && -n "$DOCKER_SERVICE" ]]; then
   exit 2
 fi
 
+# Fall back to the compose service so the local query runs inside the container. Querying
+# 127.0.0.1 from the host only reaches the node when rpc-shared.yml publishes RPC_PORT.
+# Applied after parsing so --container still works and stays mutually exclusive.
+if [[ -z "$CONTAINER" && -z "$DOCKER_SERVICE" ]]; then
+  DOCKER_SERVICE="sui-node"
+fi
+
+# Mysten's public fullnodes have deprecated JSON-RPC and return -32601 "Method not found"
+# for the methods used here, so they cannot serve as a reference. Override with
+# --public-rpc if you have your own.
 default_public_rpc() {
   case "${NETWORK:-mainnet}" in
-    mainnet) echo "https://fullnode.mainnet.sui.io:443" ;;
-    testnet) echo "https://fullnode.testnet.sui.io:443" ;;
+    mainnet) echo "https://sui-rpc.publicnode.com" ;;
+    testnet) echo "https://sui-testnet-rpc.publicnode.com" ;;
     devnet) echo "https://fullnode.devnet.sui.io:443" ;;
-    *) echo "https://fullnode.mainnet.sui.io:443" ;;
+    *) echo "https://sui-rpc.publicnode.com" ;;
   esac
 }
 
