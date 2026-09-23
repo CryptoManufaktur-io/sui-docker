@@ -1,0 +1,17 @@
+services:
+  sui-node:
+    labels:
+      - traefik.http.routers.suitestnetgrpc.service=suitestnetgrpc
+      - traefik.http.routers.suitestnetgrpc.entrypoints=websecure
+      - traefik.http.routers.suitestnetgrpc.rule=Host(`${GRPC_FQDN}`) && (PathPrefix(`/sui.rpc.`) || PathPrefix(`/grpc.reflection.`) || PathPrefix(`/grpc.health.`))
+      - traefik.http.routers.suitestnetgrpc.tls.certresolver=letsencrypt
+      - traefik.http.routers.suitestnetgrpc.middlewares=suitestnetgrpc-allow
+      - traefik.http.middlewares.suitestnetgrpc-allow.ipallowlist.sourcerange=${GRPC_ALLOWED_IPS}
+      - traefik.http.services.suitestnetgrpc.loadbalancer.server.port=${RPC_PORT}
+      - traefik.http.services.suitestnetgrpc.loadbalancer.server.scheme=h2c
+      # sui.yml also defines JSON-RPC routers (${RPC_HOST} and ${RPC_HOST}lb) pointing at
+      # the same port 9000, with no middleware. Traefik routes on the Host header, which
+      # any client can set regardless of DNS, so without this those routers are an open
+      # unauthenticated Sui RPC. Put them behind the same allowlist.
+      - traefik.http.routers.${RPC_HOST}.middlewares=suitestnetgrpc-allow
+      - traefik.http.routers.${RPC_HOST}lb.middlewares=suitestnetgrpc-allow
