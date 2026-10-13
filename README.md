@@ -69,6 +69,12 @@ ungated route.
 Requests without a valid token get a 404, not a 401. Use an auth sidecar if you need 401
 or multiple header names.
 
+`grpc-ipallow.yml` is the same idea for clients that cannot send a header: its own hostname, set
+with `GRPC_IPALLOW_HOST`, admitting only the CIDRs in `GRPC_ALLOWED_IPS`. It routes the gRPC
+services and `GET /health`, so a client can health-check the node on the same hostname. The
+allowlist sees the TCP source address, so the hostname must be DNS-only, not proxied through
+Cloudflare. Unlike `grpc-eks.yml`, it does not touch the JSON-RPC routers.
+
 ## Restoring from a specific epoch
 
 `SNAPSHOT_EPOCH` pins the formal snapshot to an epoch instead of the latest. Applies only

@@ -1,0 +1,14 @@
+# Optional overlay: gRPC v2 on its own hostname, gated by source IP rather than a token header,
+# for clients that cannot send one. Unlike grpc-eks.yml it leaves the JSON-RPC routers as they are.
+# Add it to COMPOSE_FILE alongside ext-network.yml, and set GRPC_IPALLOW_HOST and GRPC_ALLOWED_IPS.
+services:
+  sui-node:
+    labels:
+      - traefik.http.routers.${GRPC_IPALLOW_HOST}.service=${GRPC_IPALLOW_HOST}
+      - traefik.http.routers.${GRPC_IPALLOW_HOST}.entrypoints=websecure
+      - traefik.http.routers.${GRPC_IPALLOW_HOST}.rule=Host(`${GRPC_IPALLOW_HOST}.${DOMAIN}`) && (PathPrefix(`/sui.rpc.`) || PathPrefix(`/grpc.health.`) || Path(`/health`))
+      - traefik.http.routers.${GRPC_IPALLOW_HOST}.tls.certresolver=letsencrypt
+      - traefik.http.routers.${GRPC_IPALLOW_HOST}.middlewares=${GRPC_IPALLOW_HOST}-allow
+      - traefik.http.middlewares.${GRPC_IPALLOW_HOST}-allow.ipallowlist.sourcerange=${GRPC_ALLOWED_IPS}
+      - traefik.http.services.${GRPC_IPALLOW_HOST}.loadbalancer.server.port=${RPC_PORT}
+      - traefik.http.services.${GRPC_IPALLOW_HOST}.loadbalancer.server.scheme=h2c
