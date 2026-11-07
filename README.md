@@ -131,12 +131,13 @@ To enable it, add `auto-upgrade.yml` to `COMPOSE_FILE` in `.env`, e.g.:
 You can tune behavior via `.env`: `WATCH_INTERVAL`, `RUN_ONCE`, `SERVICE_NAME`, `SLACK_WEBHOOK_URL`, `SLACK_NO_UPDATE`.
 The auto-upgrade container uses the repo directory name as the compose project name.
 
-Each run also checks that the `sui-node` binary in the built image comes from the commit the release tag points at,
-by comparing the commit suffix of `sui-node --version` with the GitHub tag. Mysten has replaced release tarballs after
-publishing, and a cached build keeps the old binary under the same tag. On a mismatch at the current tag, the image is
-rebuilt with `--no-cache` and `sui-node` restarted. On a mismatch right after an upgrade, the build is retried once
-without cache, and the upgrade rolls back if the binary still does not match. If GitHub or the image cannot be
-queried, the check is skipped.
+Each run also checks whether Mysten replaced the release tarball after this host built from it, which Mysten has done
+for `mainnet-v1.83.1`. The tag name does not change, and the build cache keeps the old download, so without this check
+the host keeps the old binary indefinitely. The check compares the `updated_at` of the release's
+`sui-<tag>-ubuntu-x86_64.tgz` asset with the creation time of the image layer that downloaded it. If the asset is newer,
+`sui-node` is rebuilt with `--no-cache` and restarted. The same check runs right after an upgrade build, before the
+restart. If GitHub or the image history cannot be read, the check is skipped. It does not compare the commit suffix of
+`sui-node --version`, because which commit a binary reports varies with the build path.
 
 ### Slack notifications
 
@@ -144,9 +145,9 @@ Slack notifications are only sent if `SLACK_WEBHOOK_URL` is set.
 
 - **No upgrade needed**: sends a ✅ notification only when `SLACK_NO_UPDATE=1`.
 - **Upgrade success**: sends a 🎉 notification after the new container is running.
-- **Upgrade failure**: sends a ❌ notification and rolls back `DOCKER_TAG` when build or startup fails, or when the
-  built binary does not match the release commit.
-- **Stale image rebuilt**: sends a 🔁 notification after rebuilding an image whose binary did not match the current tag,
+- **Upgrade failure**: sends a ❌ notification and rolls back `DOCKER_TAG` when build or startup fails, including a
+  failed no-cache rebuild after a replaced tarball.
+- **Replaced tarball rebuilt**: sends a 🔁 notification after rebuilding the current tag from a replaced release tarball,
   or a ❌ notification if that rebuild or restart fails.
 
 ### Upgrade flow (summary)
