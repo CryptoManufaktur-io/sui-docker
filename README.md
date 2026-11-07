@@ -131,13 +131,23 @@ To enable it, add `auto-upgrade.yml` to `COMPOSE_FILE` in `.env`, e.g.:
 You can tune behavior via `.env`: `WATCH_INTERVAL`, `RUN_ONCE`, `SERVICE_NAME`, `SLACK_WEBHOOK_URL`, `SLACK_NO_UPDATE`.
 The auto-upgrade container uses the repo directory name as the compose project name.
 
+Each run also checks that the `sui-node` binary in the built image comes from the commit the release tag points at,
+by comparing the commit suffix of `sui-node --version` with the GitHub tag. Mysten has replaced release tarballs after
+publishing, and a cached build keeps the old binary under the same tag. On a mismatch at the current tag, the image is
+rebuilt with `--no-cache` and `sui-node` restarted. On a mismatch right after an upgrade, the build is retried once
+without cache, and the upgrade rolls back if the binary still does not match. If GitHub or the image cannot be
+queried, the check is skipped.
+
 ### Slack notifications
 
 Slack notifications are only sent if `SLACK_WEBHOOK_URL` is set.
 
 - **No upgrade needed**: sends a ✅ notification only when `SLACK_NO_UPDATE=1`.
 - **Upgrade success**: sends a 🎉 notification after the new container is running.
-- **Upgrade failure**: sends a ❌ notification and rolls back `DOCKER_TAG` when build or startup fails.
+- **Upgrade failure**: sends a ❌ notification and rolls back `DOCKER_TAG` when build or startup fails, or when the
+  built binary does not match the release commit.
+- **Stale image rebuilt**: sends a 🔁 notification after rebuilding an image whose binary did not match the current tag,
+  or a ❌ notification if that rebuild or restart fails.
 
 ### Upgrade flow (summary)
 

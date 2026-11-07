@@ -102,6 +102,51 @@ fetch_latest_tag() {
     | tail -n1
 }
 
+image_binary_commit() {
+  local image version
+  image=$(compose config --images "${SERVICE_NAME}" | head -n1)
+  version=$(docker run --rm --entrypoint sui-node "${image}" --version 2>/dev/null | awk '{print $2}')
+  case "${version}" in
+    *-*) echo "${version##*-}" ;;
+  esac
+}
+
+# Returns 0 when the image's sui-node binary was built from the commit the tag points at,
+# 1 when it was built from a different commit, and 2 when either side cannot be resolved.
+binary_matches_tag() {
+  local tag="$1" expected actual
+  expected=$(curl -fsSL "${GITHUB_API}/repos/MystenLabs/sui/commits/${tag}" | jq -r '.sha // empty' || true)
+  actual=$(image_binary_commit || true)
+  if [ -z "${expected}" ] || [ -z "${actual}" ]; then
+    log "Unable to compare image binary with ${tag} (tag commit '${expected}', binary commit '${actual}')."
+    return 2
+  fi
+  if [ "${expected:0:${#actual}}" != "${actual}" ]; then
+    log "Image binary commit ${actual} does not match ${tag} commit ${expected:0:12}."
+    return 1
+  fi
+  return 0
+}
+
+rebuild_stale_image() {
+  local network="$1" tag="$2" rc=0
+  log "Rebuilding ${SERVICE_NAME} for ${tag} without cache."
+  if ! compose build --pull --no-cache "${SERVICE_NAME}"; then
+    slack "❌ Sui ${network} ${tag}: image binary did not match the release commit and the rebuild failed."
+    return 1
+  fi
+  binary_matches_tag "${tag}" || rc=$?
+  if [ "${rc}" -eq 1 ]; then
+    slack "❌ Sui ${network} ${tag}: rebuilt image still does not match the release commit. ${SERVICE_NAME} not restarted."
+    return 1
+  fi
+  if ! compose up -d --remove-orphans "${SERVICE_NAME}"; then
+    slack "❌ Sui ${network} ${tag}: rebuilt image to match the release commit, but startup failed."
+    return 1
+  fi
+  slack "🔁 Rebuilt Sui ${network} ${tag}: the image binary did not match the release commit."
+}
+
 upgrade_once() {
   if [ ! -f "${ENV_FILE}" ]; then
     log "Missing ${ENV_FILE}. Aborting."
@@ -109,7 +154,7 @@ upgrade_once() {
   fi
 
   COMPOSE_ARGS=()
-  local current_tag network latest_tag backup container_id status
+  local current_tag network latest_tag backup container_id status match_rc
   current_tag=$(env_get DOCKER_TAG || true)
   network=$(env_get NETWORK || true)
 
@@ -134,6 +179,12 @@ upgrade_once() {
   fi
 
   if [ "${current_tag}" = "${latest_tag}" ]; then
+    match_rc=0
+    binary_matches_tag "${current_tag}" || match_rc=$?
+    if [ "${match_rc}" -eq 1 ]; then
+      rebuild_stale_image "${network}" "${current_tag}"
+      return $?
+    fi
     log "No update needed (${current_tag})."
     if [ "${SLACK_NO_UPDATE}" = "1" ]; then
       slack "✅ No upgrade needed. Sui ${network} is already ${current_tag}."
@@ -152,6 +203,23 @@ upgrade_once() {
     compose build --pull || true
     compose up -d --remove-orphans "${SERVICE_NAME}" || true
     slack "❌ Upgrade failed for Sui ${network}. Build error. Rolled back to ${current_tag}."
+    exit 1
+  fi
+
+  match_rc=0
+  binary_matches_tag "${latest_tag}" || match_rc=$?
+  if [ "${match_rc}" -eq 1 ]; then
+    log "Retrying ${SERVICE_NAME} build for ${latest_tag} without cache."
+    if compose build --pull --no-cache "${SERVICE_NAME}"; then
+      match_rc=0
+      binary_matches_tag "${latest_tag}" || match_rc=$?
+    fi
+  fi
+  if [ "${match_rc}" -eq 1 ]; then
+    log "Built binary does not match ${latest_tag}. Rolling back."
+    cp "${backup}" "${ENV_FILE}"
+    compose build --pull || true
+    slack "❌ Upgrade failed for Sui ${network}. The ${latest_tag} release binary does not match its tag commit. Kept ${current_tag}."
     exit 1
   fi
 
