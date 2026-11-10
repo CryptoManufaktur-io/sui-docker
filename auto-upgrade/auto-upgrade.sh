@@ -102,49 +102,36 @@ fetch_latest_tag() {
     | tail -n1
 }
 
-image_binary_commit() {
-  local image version
+tarball_replaced_since_build() {
+  local tag="$1" image asset layer
   image=$(compose config --images "${SERVICE_NAME}" | head -n1)
-  version=$(docker run --rm --entrypoint sui-node "${image}" --version 2>/dev/null | awk '{print $2}')
-  case "${version}" in
-    *-*) echo "${version##*-}" ;;
-  esac
-}
-
-# Returns 0 when the image's sui-node binary was built from the commit the tag points at,
-# 1 when it was built from a different commit, and 2 when either side cannot be resolved.
-binary_matches_tag() {
-  local tag="$1" expected actual
-  expected=$(curl -fsSL "${GITHUB_API}/repos/MystenLabs/sui/commits/${tag}" | jq -r '.sha // empty' || true)
-  actual=$(image_binary_commit || true)
-  if [ -z "${expected}" ] || [ -z "${actual}" ]; then
-    log "Unable to compare image binary with ${tag} (tag commit '${expected}', binary commit '${actual}')."
-    return 2
-  fi
-  if [ "${expected:0:${#actual}}" != "${actual}" ]; then
-    log "Image binary commit ${actual} does not match ${tag} commit ${expected:0:12}."
+  asset=$(curl -fsSL "${GITHUB_API}/repos/MystenLabs/sui/releases/tags/${tag}" \
+    | jq -r --arg n "sui-${tag}-ubuntu-x86_64.tgz" '.assets[] | select(.name == $n) | .updated_at' || true)
+  layer=$(docker history --no-trunc --human=false --format '{{.CreatedAt}}|{{.CreatedBy}}' "${image}" 2>/dev/null \
+    | awk -F'|' '/sui-bin\.tgz/ && /wget/ {print $1; exit}' || true)
+  if [ -z "${asset}" ] || [ -z "${layer}" ]; then
+    log "Unable to compare ${image} with the ${tag} release asset (asset '${asset}', layer '${layer}')."
     return 1
   fi
-  return 0
+  if [ "$(date -u -d "${layer}" +%s)" -lt "$(date -u -d "${asset}" +%s)" ]; then
+    log "The ${tag} release asset was updated at ${asset}, after ${image} downloaded it at ${layer}."
+    return 0
+  fi
+  return 1
 }
 
 rebuild_stale_image() {
-  local network="$1" tag="$2" rc=0
+  local network="$1" tag="$2"
   log "Rebuilding ${SERVICE_NAME} for ${tag} without cache."
   if ! compose build --pull --no-cache "${SERVICE_NAME}"; then
-    slack "❌ Sui ${network} ${tag}: image binary did not match the release commit and the rebuild failed."
-    return 1
-  fi
-  binary_matches_tag "${tag}" || rc=$?
-  if [ "${rc}" -eq 1 ]; then
-    slack "❌ Sui ${network} ${tag}: rebuilt image still does not match the release commit. ${SERVICE_NAME} not restarted."
+    slack "❌ Sui ${network} ${tag}: the release tarball changed after this host built it, and the rebuild failed."
     return 1
   fi
   if ! compose up -d --remove-orphans "${SERVICE_NAME}"; then
-    slack "❌ Sui ${network} ${tag}: rebuilt image to match the release commit, but startup failed."
+    slack "❌ Sui ${network} ${tag}: rebuilt from the replaced release tarball, but startup failed."
     return 1
   fi
-  slack "🔁 Rebuilt Sui ${network} ${tag}: the image binary did not match the release commit."
+  slack "🔁 Rebuilt Sui ${network} ${tag}: the release tarball changed after this host built it."
 }
 
 upgrade_once() {
@@ -154,7 +141,7 @@ upgrade_once() {
   fi
 
   COMPOSE_ARGS=()
-  local current_tag network latest_tag backup container_id status match_rc
+  local current_tag network latest_tag backup container_id status
   current_tag=$(env_get DOCKER_TAG || true)
   network=$(env_get NETWORK || true)
 
@@ -179,9 +166,7 @@ upgrade_once() {
   fi
 
   if [ "${current_tag}" = "${latest_tag}" ]; then
-    match_rc=0
-    binary_matches_tag "${current_tag}" || match_rc=$?
-    if [ "${match_rc}" -eq 1 ]; then
+    if tarball_replaced_since_build "${current_tag}"; then
       rebuild_stale_image "${network}" "${current_tag}"
       return $?
     fi
@@ -206,20 +191,13 @@ upgrade_once() {
     exit 1
   fi
 
-  match_rc=0
-  binary_matches_tag "${latest_tag}" || match_rc=$?
-  if [ "${match_rc}" -eq 1 ]; then
-    log "Retrying ${SERVICE_NAME} build for ${latest_tag} without cache."
-    if compose build --pull --no-cache "${SERVICE_NAME}"; then
-      match_rc=0
-      binary_matches_tag "${latest_tag}" || match_rc=$?
-    fi
-  fi
-  if [ "${match_rc}" -eq 1 ]; then
-    log "Built binary does not match ${latest_tag}. Rolling back."
+  if tarball_replaced_since_build "${latest_tag}" \
+    && ! compose build --pull --no-cache "${SERVICE_NAME}"; then
+    log "No-cache rebuild failed. Rolling back."
     cp "${backup}" "${ENV_FILE}"
     compose build --pull || true
-    slack "❌ Upgrade failed for Sui ${network}. The ${latest_tag} release binary does not match its tag commit. Kept ${current_tag}."
+    compose up -d --remove-orphans "${SERVICE_NAME}" || true
+    slack "❌ Upgrade failed for Sui ${network}. Rebuild from the replaced ${latest_tag} release tarball failed. Rolled back to ${current_tag}."
     exit 1
   fi
 
